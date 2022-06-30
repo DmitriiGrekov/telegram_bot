@@ -44,6 +44,15 @@ async function setUserEndDate(chatId, endDate){
     return res.rows;
 }
 
+async function setUserStatus(chatId, status){
+    const res = await pool.query(`UPDATE telegram_users SET status = '${status}' where tg_id = ${chatId}`);
+    return res.rows;
+}
+
+async function clearUserDateTime(chatId){
+    const res = 
+}
+
 
 
 async function noJob(ctx){
@@ -103,6 +112,12 @@ async function userWait(ctx, current_state, chatId){
 
 }
 
+async function userWorker(ctx, current_state, chatId){
+    if(current_state != 'user_worker') await setUserState('user_worker', chatId);
+    ctx.reply(`Хорошей вам работы. После окончания работы нажниме кнопку "Закончить работу", чтобы взять новый заказ`, Markup.keyboard(['Закончить работу']))
+    
+}
+
 
 
 
@@ -115,7 +130,7 @@ bot.start(async (ctx) => {
     if(user.length > 0){
 
         if(user[0].role_name == 'user' && user[0].state == 'start'){
-            ctx.reply(`Все отлично, ваша роль пользователь`, Markup.keyboard(['Нет работы']));
+            ctx.reply(`Все отлично, удачной работы, ваша роль пользователь`, Markup.keyboard(['Нет работы']));
         }
 
     }
@@ -150,6 +165,18 @@ bot.on('text', async (ctx) => {
                 await setUserStartDate(chatId, localDate);
                 await selectEndDate(ctx, state, chatId);
             }
+            else if(text == 'Заняли' && state == 'user_wait'){
+                await setUserStatus(chatId, 'worker');
+                await userWorker(ctx, state, chatId);
+            }
+            else if(text == 'Закончить работу' && state == 'user_worker'){
+                await setUserState('start', chatId);
+                await setUserStatus(chatId, 'unemployed')
+                await setUserStartDate(chatId, '');
+                await setUserEndDate(chatId, '');
+                noJob(ctx);
+            }
+
 
             else{
                 if(state == 'start'){
@@ -163,6 +190,9 @@ bot.on('text', async (ctx) => {
                 }
                 else if(state == 'user_wait'){
                     userWait(ctx, state, chatId);
+                }
+                else if(state == 'user_worker'){
+                    userWorker(ctx, state, chatId);
                 }
             }
 
@@ -192,9 +222,6 @@ bot.on('web_app_data', async (ctx) => {
 	var serverOffset = (new Date()).getTimezoneOffset() * 60 * 1000
 	var offset = serverOffset - clientOffset
 
-
-    console.log(state);
-
     var dateTimeUtc= moment(timespamp).format();
 
     if(state == 'select_start_date'){
@@ -212,36 +239,51 @@ bot.on('web_app_data', async (ctx) => {
 
 
 async function botNotify(){
+    // Уведомление пользователя каждые 2 часа
 
     let res = await pool.query(`select telegram_users.id, telegram_users.state, telegram_users.first_name, telegram_users.last_name, telegram_users.middle_name, telegram_users.tg_id, telegram_users.tg_name, telegram_users.date_time_start, telegram_users.date_time_end, telegram_users.status, roles.name as role_name from telegram_users inner join roles on telegram_users.role_id=roles.id;`);
 
     let users = res.rows;
 
     users.forEach(user => {
-        let startDateTime = moment(user.date_time_start).utcOffset(5).format("H:mm");
-        let currentTime = moment.utc().utcOffset(3).format("H:mm");
-        let getDate = (string) => new Date(0, 0,0, string.split(':')[0], string.split(':')[1]); //получение даты из строки (подставляются часы и минуты
-        let different = (getDate(currentTime) - getDate(startDateTime));
+        //Проверка статуса пользователя unemployed - без работы
+        if(user.status == 'unemployed'){
+            // Получение даты старта работы и текущей даты
+            let startDate = moment(user.date_time_start).utcOffset(5).format('DD.MM.YYYY');
+            let currentDate = moment.utc().utcOffset(3).format('DD.MM.YYYY');
 
-        let hours = Math.floor((different % 86400000) / 3600000);
-        let minutes = Math.round(((different % 86400000) % 3600000) / 60000);
-        let result = hours + ':' + minutes;
+            //Если дата старта и текущая дата совпадают получаем время старта и текущее время и сравниваем
+            if(startDate == currentDate){
+                let startTime = moment(user.date_time_start).utcOffset(5).format("H:mm");
+                let currentTime = moment.utc().utcOffset(3).format("H:mm");
+                let getDate = (string) => new Date(0, 0,0, string.split(':')[0], string.split(':')[1]); //получение даты из строки (подставляются часы и минуты
+                let different = (getDate(currentTime) - getDate(startTime));
 
-        if(minutes == 0 && hours % 2 == 0){
-            bot.telegram.sendMessage(user.tg_id, "Каждые 2 часа")
+                let hours = Math.floor((different % 86400000) / 3600000);
+                let minutes = Math.round(((different % 86400000) % 3600000) / 60000);
+                let result = hours + ':' + minutes;
+
+                //Каждые 2 часа отправляем сообщение
+                    if(minutes){
+                    if(minutes == 0 && hours % 2 == 0){
+                        bot.telegram.sendMessage(user.tg_id, "Еще не заняли?", Markup.keyboard(['Заняли', 'Еще актуально']))
+                    }
+                }
+            }
         }
+        
+        
+
+
+        
     
 
-        console.log(`Время начала работы = ${startDateTime}, текущее время ${currentTime}, разница во времени ${result}` );
+        // console.log(`Время начала работы = ${startTime}, текущее время ${currentTime}, разница во времени ${result}` );
     
     });
-
-   
-
-
 }
 
-setInterval(botNotify, 1000 * 60);
+// setInterval(botNotify, 10000);
 
 
 
