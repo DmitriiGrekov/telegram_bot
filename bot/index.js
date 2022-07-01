@@ -1,89 +1,83 @@
 const { Telegraf, Markup } = require('telegraf')
 var moment = require('moment');
 const pool = require('./db')
-
-
+const options = require('./modules');
 const bot = new Telegraf("5339895251:AAGN49MpOqcbz_RPuO5txDJjFCJRR_phOpo")
 
+async function notifyAdminUser(user){
+    //Уведомление администраторов о действии пользователей
 
-function getTime(offset)
-        {
-            var d = new Date();
-            localTime = d.getTime();
-            localOffset = d.getTimezoneOffset() * 60000;
+    const res = await pool.selectAdminUser();
+    const admins = res.rows;
 
-            // obtain UTC time in msec
-            utc = localTime + localOffset;
-            // create new Date object for different city
-            // using supplied offset
-            var nd = new Date(utc + (3600000*offset));
-            //nd = 3600000 + nd;
-            utc = new Date(utc);
-            // return time as a string
-            return utc;
+    admins.forEach(admin => {
+        if(user[0].state == 'user_worker'){
+
+            bot.telegram.sendMessage(admin.tg_id, `Пользователь @${user[0].tg_name} получил работу`);
         }
+        else if(user[0].state == 'user_wait'){
 
-async function checkUser(chatId){
-
-    const res = await pool.query(`select telegram_users.id, telegram_users.state, telegram_users.first_name, telegram_users.last_name, telegram_users.middle_name, telegram_users.tg_id, telegram_users.tg_name, telegram_users.date_time_start, telegram_users.date_time_end, roles.name as role_name from telegram_users inner join roles on telegram_users.role_id=roles.id where telegram_users.tg_id=${chatId};`)
-    return res.rows
+            bot.telegram.sendMessage(admin.tg_id, `Пользователь @${user[0].tg_name} оставил заявку на работу. Готов стартануть ${options.formatDate(user[0].date_time_start)}`);
+        }
+    });
 }
 
-async function setUserState(state, chatId){
-    const res = await pool.query(`UPDATE telegram_users SET state = '${state}' WHERE tg_id=${chatId};`)
-    return res.rows;
+async function showUnemployedUser(ctx){
+    // Действие при нажатии кнопки показать незанятых пользователей
+
+    const res = await pool.selectUnemployedUser();
+    const users = res.rows;
+
+    if(users.length > 0){
+        let text = "";
+        users.forEach(user => {
+            text += `Пользователь @${user.tg_name} ожидает работы и готов стартануть ${options.formatDate(user.date_time_start)}\n------------------------------\n`;
+        });
+        ctx.reply(text);
+    }
+    else{
+        ctx.reply('Все пользователи заняты');
+    }
 }
-
-async function setUserStartDate(chatId, startDate){
-    const res = await pool.query(`UPDATE telegram_users SET date_time_start = '${startDate}' WHERE tg_id=${chatId}`);
-    return res.rows;
-}
-
-async function setUserEndDate(chatId, endDate){
-    const res = await pool.query(`UPDATE telegram_users SET date_time_end = '${endDate}' WHERE tg_id=${chatId}`);
-    return res.rows;
-}
-
-async function setUserStatus(chatId, status){
-    const res = await pool.query(`UPDATE telegram_users SET status = '${status}' where tg_id = ${chatId}`);
-    return res.rows;
-}
-
-async function clearUserDateTime(chatId){
-    const res = 
-}
-
-
 
 async function noJob(ctx){
-    ctx.reply(`Все отлично, ваша роль пользователь`, Markup.keyboard(['Нет работы']));
-}
+    // Приветственное сообщение
 
-async function selectStartDate(ctx, current_state, chatId){
-
-            if(current_state != 'select_start_date') await setUserState('select_start_date', chatId);
-
-            var defaultButton = {
-                    text: 'Выбрать дату и время',
-                    web_app: {
-                        url: 'https://expented.github.io/tgdtp/'
-                    }
-                }
-            
-                var print = 'Выберите, когда начинаете по мск'
-            
-                ctx.reply(print, {
+    ctx.reply(`Все отлично, удачной работы, ваша роль пользователь. Нажмите кнопку "Нет работы", чтобы начать работать`, {
                     reply_markup: JSON.stringify({
                         resize_keyboard: true,
                         keyboard: [
-                            [ defaultButton, 'Сейчас'],
+                            ['Нет работы'],
                         ]
                     })
-                })
+                });
+}
+
+async function selectStartDate(ctx, current_state, chatId){
+    // Выбор даты начала работы пользователя
+
+    if(current_state != 'select_start_date') await pool.setUserState('select_start_date', chatId);
+    var defaultButton = {
+        text: 'Выбрать дату и время',
+        web_app: {
+            url: 'https://expented.github.io/tgdtp/'
+        }
+    }
+    var print = 'Выберите, когда начинаете по мск'
+    ctx.reply(print, {
+        reply_markup: JSON.stringify({
+            resize_keyboard: true,
+            keyboard: [
+                [ defaultButton, 'Сейчас'],
+            ]
+        })
+    })
 }
 
 async function selectEndDate(ctx, current_state, chatId){
-    if(current_state != "select_end_date") await setUserState('select_end_date', chatId)
+    // Выбор даты окончиания работы пользователя
+
+    if(current_state != "select_end_date") await pool.setUserState('select_end_date', chatId)
     var defaultButton = {
                     text: 'Выбрать дату и время',
                     web_app: {
@@ -91,48 +85,78 @@ async function selectEndDate(ctx, current_state, chatId){
                     }
                 }
             
-                var print = 'Выберите дату окончания работы (по мск)';
-            
-                ctx.reply(print, {
-                    reply_markup: JSON.stringify({
-                        resize_keyboard: true,
-                        keyboard: [
-                            [ defaultButton],
-                        ]
-                    })
-                })
+    var print = 'Выберите дату окончания работы (по мск)';
+        
+    ctx.reply(print, {
+            reply_markup: JSON.stringify({
+                resize_keyboard: true,
+                keyboard: [
+                    [ defaultButton],
+                ]
+            })
+    })
 }
 
 async function userWait(ctx, current_state, chatId){
-    if(current_state != 'user_wait') await setUserState('user_wait', chatId);
-    const user = await checkUser(chatId);
+    // Действие, после оформления заявки пользователя
 
-    ctx.reply(`Вы успешно задали время работы. Время начала работы ${user[0].date_time_start} время окончания работы ${user[0].date_time_end}. Ожидайте сообщения от пм.`, Markup.keyboard([['Заняли']]));
+    if(current_state != 'user_wait') await pool.setUserState('user_wait', chatId);
 
+    const user = await pool.checkUser(chatId);
 
+    ctx.reply(`Вы успешно задали время работы. Время начала работы ${options.formatDate(user[0].date_time_start)}. Время окончания работы ${options.formatDate(user[0].date_time_end)}. Ожидайте сообщения от пм.`, 
+                        {reply_markup: JSON.stringify({
+                        resize_keyboard: true,
+                        keyboard: [
+                            [ 'Заняли'],
+                        ]
+    })});
+    notifyAdminUser(user);
 }
 
 async function userWorker(ctx, current_state, chatId){
-    if(current_state != 'user_worker') await setUserState('user_worker', chatId);
-    ctx.reply(`Хорошей вам работы. После окончания работы нажниме кнопку "Закончить работу", чтобы взять новый заказ`, Markup.keyboard(['Закончить работу']))
-    
+    // Действие при нажатии кнопки Заняли
+
+    if(current_state != 'user_worker') await pool.setUserState('user_worker', chatId);
+
+    ctx.reply(`Хорошей вам работы. После окончания работы нажмите кнопку "Закончить работу", чтобы взять новый заказ`,  
+            {reply_markup: JSON.stringify({
+                resize_keyboard: true,
+                keyboard: [
+                    ['Закончить работу'],
+                ]
+            })})
+    const user = await pool.checkUser(chatId);
+    notifyAdminUser(user);
 }
 
-
-
-
 bot.start(async (ctx) => {
+    // Действие при вводе команды /start
 
     const chatId = ctx.update.message.from.id;
-    await setUserState('start', chatId);
-    const user = await checkUser(chatId);
+    await pool.setUserState('start', chatId);
+    const user = await pool.checkUser(chatId);
     
     if(user.length > 0){
 
         if(user[0].role_name == 'user' && user[0].state == 'start'){
-            ctx.reply(`Все отлично, удачной работы, ваша роль пользователь`, Markup.keyboard(['Нет работы']));
+            ctx.reply(`Все отлично, удачной работы, ваша роль пользователь. Нажмите кнопку "Нет работы", чтобы начать работать.`, {reply_markup: JSON.stringify({
+                resize_keyboard: true,
+                keyboard: [
+                    ['Нет работы'],
+                ]
+            })});
         }
-
+        else if(user[0].role_name == 'admin'){
+            ctx.reply(`Приветствую, администратор. Чтобы посмотреть всех незанятых пользователей нажмите кнопку "Показать незанятых пользователей"`, 
+                    {reply_markup: JSON.stringify({
+                        resize_keyboard: true,
+                        keyboard: [
+                            ['Показать незанятых пользователей'],
+                        ]
+                    })}
+                    );
+        }
     }
     else{
         ctx.reply(`У вас нет доступа, попросите добавить ваш id = ${ctx.update.message.from.id}, ваш телеграм никнейм = ${ctx.update.message.from.username}`)
@@ -141,43 +165,41 @@ bot.start(async (ctx) => {
 })
 
 bot.on('text', async (ctx) => {
+    // Основная функция бота
+
     const chatId = ctx.update.message.from.id;
-    const user = await checkUser(chatId);
+    const user = await pool.checkUser(chatId);
     const text = ctx.update.message.text;
     let state = null;
 
     if(user.length > 0){
         state = user[0].state;
     }
-    
+
     if(user.length > 0){
-
         if(user[0].role_name == 'user'){
-
-            
-
             if(text == 'Нет работы'){
                 await selectStartDate(ctx, state, chatId);
             }
             else if(text == 'Сейчас' && state == 'select_start_date'){
                 var testDateUtc = moment.utc();
                 var localDate = moment(testDateUtc).utcOffset(3).format();
-                await setUserStartDate(chatId, localDate);
+                await pool.setUserStartDate(chatId, localDate);
                 await selectEndDate(ctx, state, chatId);
             }
             else if(text == 'Заняли' && state == 'user_wait'){
-                await setUserStatus(chatId, 'worker');
+                await pool.setUserStatus(chatId, 'worker');
                 await userWorker(ctx, state, chatId);
             }
             else if(text == 'Закончить работу' && state == 'user_worker'){
-                await setUserState('start', chatId);
-                await setUserStatus(chatId, 'unemployed')
-                await setUserStartDate(chatId, '');
-                await setUserEndDate(chatId, '');
+                await pool.setUserState('start', chatId);
+                await pool.setUserStatus(chatId, 'unemployed')
+                await pool.clearUserDateTime(chatId);
                 noJob(ctx);
             }
-
-
+            else if(text == 'Еще актуально' && state == 'user_wait'){
+                ctx.reply('Отлично, пм ищут вам работу, ожидайте');
+            }
             else{
                 if(state == 'start'){
                     noJob(ctx);
@@ -189,65 +211,83 @@ bot.on('text', async (ctx) => {
                     selectEndDate(ctx, state, chatId);
                 }
                 else if(state == 'user_wait'){
-                    userWait(ctx, state, chatId);
+                    ctx.reply(`Вы успешно задали время работы. Время начала работы ${options.formatDate(user[0].date_time_start)}. Время окончания работы ${options.formatDate(user[0].date_time_end)}. Ожидайте сообщения от пм.`, 
+                        {reply_markup: JSON.stringify({
+                            resize_keyboard: true,
+                            keyboard: [
+                                [ 'Заняли'],
+                            ]
+                        })});
                 }
                 else if(state == 'user_worker'){
-                    userWorker(ctx, state, chatId);
+                    ctx.reply(`Хорошей вам работы. После окончания работы нажмите кнопку "Закончить работу", чтобы взять новый заказ`,  
+                        {reply_markup: JSON.stringify({
+                        resize_keyboard: true,
+                            keyboard: [
+                        ['Закончить работу'],
+                        ]
+                    })})
                 }
             }
-
-
         }
+        else if(user[0].role_name == 'admin'){
+            if(text == 'Показать незанятых пользователей'){
+                showUnemployedUser(ctx);
+            }
+            else{
 
+            ctx.reply(`Приветствую, администратор. Чтобы посмотреть всех незанятых пользователей нажмите кнопку "Показать незанятых пользователей"`,
+                    {reply_markup: JSON.stringify({
+                        resize_keyboard: true,
+                        keyboard: [
+                            ['Показать незанятых пользователей'],
+                        ]
+                    })}
+                    );
+            }
+        }
     }
     else{
         ctx.reply(`У вас нет доступа, попросите добавить ваш id = ${ctx.update.message.from.id}, ваш телеграм никнейм = ${ctx.update.message.from.username}`)
     }
 })
 
-
 bot.on('web_app_data', async (ctx) => {
+    // Действие при выборе даты и времени
+
     const chatId = ctx.update.message.from.id;
-    const user = await checkUser(chatId);
+    const user = await pool.checkUser(chatId);
     let state = null;
 
     if(user.length > 0){
         state = user[0].state;
     }
-
 	var [ timespamp, timezoneOffset ] = ctx.message.web_app_data.data.split('_')
 	timespamp = parseInt(timespamp)
-
 	var clientOffset = parseInt(timezoneOffset) * 60 * 1000
 	var serverOffset = (new Date()).getTimezoneOffset() * 60 * 1000
 	var offset = serverOffset - clientOffset
-
     var dateTimeUtc= moment(timespamp).format();
 
     if(state == 'select_start_date'){
-        await setUserStartDate(chatId, dateTimeUtc);
+        await pool.setUserStartDate(chatId, dateTimeUtc);
         await selectEndDate(ctx, state, chatId);
     }
     else if(state == 'select_end_date'){
-        await setUserEndDate(chatId, dateTimeUtc);
+        await pool.setUserEndDate(chatId, dateTimeUtc);
         await userWait(ctx, state, chatId);
-
     }
-
 })
-
-
 
 async function botNotify(){
     // Уведомление пользователя каждые 2 часа
 
-    let res = await pool.query(`select telegram_users.id, telegram_users.state, telegram_users.first_name, telegram_users.last_name, telegram_users.middle_name, telegram_users.tg_id, telegram_users.tg_name, telegram_users.date_time_start, telegram_users.date_time_end, telegram_users.status, roles.name as role_name from telegram_users inner join roles on telegram_users.role_id=roles.id;`);
-
+    let res = await pool.notifyBot();
     let users = res.rows;
 
     users.forEach(user => {
         //Проверка статуса пользователя unemployed - без работы
-        if(user.status == 'unemployed'){
+        if(user.status == 'unemployed' && user.date_time_start){
             // Получение даты старта работы и текущей даты
             let startDate = moment(user.date_time_start).utcOffset(5).format('DD.MM.YYYY');
             let currentDate = moment.utc().utcOffset(3).format('DD.MM.YYYY');
@@ -262,31 +302,23 @@ async function botNotify(){
                 let hours = Math.floor((different % 86400000) / 3600000);
                 let minutes = Math.round(((different % 86400000) % 3600000) / 60000);
                 let result = hours + ':' + minutes;
-
                 //Каждые 2 часа отправляем сообщение
-                    if(minutes){
-                    if(minutes == 0 && hours % 2 == 0){
-                        bot.telegram.sendMessage(user.tg_id, "Еще не заняли?", Markup.keyboard(['Заняли', 'Еще актуально']))
+                    if(minutes == 0 && hours % 2 == 0 && hours != 0){
+                        bot.telegram.sendMessage(user.tg_id,
+                                                "Еще не заняли?",
+                                                {reply_markup: JSON.stringify({
+                                                    resize_keyboard: true,
+                                                    keyboard: [
+                                                        [ 'Заняли', 'Еще актуально'],
+                                                    ]
+                                                })})
                     }
                 }
             }
         }
-        
-        
+    )};
 
+setInterval(botNotify, 1000 * 60);
 
-        
-    
-
-        // console.log(`Время начала работы = ${startTime}, текущее время ${currentTime}, разница во времени ${result}` );
-    
-    });
-}
-
-// setInterval(botNotify, 10000);
-
-
-
-
-
+// Запуск бота
 bot.launch()
